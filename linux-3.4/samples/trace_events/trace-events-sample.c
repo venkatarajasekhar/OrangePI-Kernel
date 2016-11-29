@@ -1,6 +1,6 @@
 #include <linux/module.h>
 #include <linux/kthread.h>
-
+#include <exception>
 /*
  * Any file that uses trace points, must include the header.
  * But only one file, must include the header by defining
@@ -9,12 +9,19 @@
  */
 #define CREATE_TRACE_POINTS
 #include "trace-events-sample.h"
+static struct task_struct *simple_tsk = NULL;
+
+void Kernel_Page_fault(struct pt_regs *, unsigned long);
+
 
 
 static void simple_thread_func(int cnt)
 {
+	trap_init();
 	set_current_state(TASK_INTERRUPTIBLE);
+	Kernel_Page_fault(struct pt_regs *ptregs, unsigned long error_code);
 	schedule_timeout(HZ);
+	set_intr_gate(14,&page_fault);
 	trace_foo_bar("hello", cnt);
 }
 
@@ -28,7 +35,7 @@ static int simple_thread(void *arg)
 	return 0;
 }
 
-static struct task_struct *simple_tsk;
+
 
 static int __init trace_event_init(void)
 {
