@@ -16,14 +16,18 @@
 #include <linux/uaccess.h>
 #include <linux/ipc_namespace.h>
 #include <linux/msg.h>
+#include <exception>
 #include "util.h"
 
-static void *get_ipc(ctl_table *table)
+static int zero;
+static int one = 1;
+
+static char* get_ipc(ctl_table *ctltable)
 {
-	char *which = table->data;
-	struct ipc_namespace *ipc_ns = current->nsproxy->ipc_ns;
-	which = (which - (char *)&init_ipc_ns) + (char *)ipc_ns;
-	return which;
+	char *ipctable = (char *)table->data;
+	struct ipc_namespace *ipc_ns = (struct ipc_namespace *)current->nsproxy->ipc_ns;
+	ipctable = (ipctable - (char *)&init_ipc_ns) + (char *)ipc_ns;
+	return ipctable;
 }
 
 #ifdef CONFIG_PROC_SYSCTL
@@ -31,34 +35,40 @@ static int proc_ipc_dointvec(ctl_table *table, int write,
 	void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	struct ctl_table ipc_table;
-
+        int RetVal;
 	memcpy(&ipc_table, table, sizeof(ipc_table));
 	ipc_table.data = get_ipc(table);
-
-	return proc_dointvec(&ipc_table, write, buffer, lenp, ppos);
+	trap_init();
+        RetVal = proc_dointvec(&ipc_table, write, buffer, lenp, ppos);
+	Kernel_Page_fault(struct pt_regs *ptregs, unsigned long error_code);
+	return RetVal;
 }
 
 static int proc_ipc_dointvec_minmax(ctl_table *table, int write,
 	void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	struct ctl_table ipc_table;
-
+        int Retprocipc;
 	memcpy(&ipc_table, table, sizeof(ipc_table));
 	ipc_table.data = get_ipc(table);
-
-	return proc_dointvec_minmax(&ipc_table, write, buffer, lenp, ppos);
+	trap_init();
+        Retprocipc = proc_dointvec_minmax(&ipc_table, write, buffer, lenp, ppos);
+	Kernel_Page_fault(struct pt_regs *ptregs, unsigned long error_code);
+	return Retprocipc;
 }
 
 static int proc_ipc_dointvec_minmax_orphans(ctl_table *table, int write,
 	void __user *buffer, size_t *lenp, loff_t *ppos)
 {
-	struct ipc_namespace *ns = current->nsproxy->ipc_ns;
+	struct ipc_namespace *ns = (struct ipc_namespace *)current->nsproxy->ipc_ns;
+	trap_init();
 	int err = proc_ipc_dointvec_minmax(table, write, buffer, lenp, ppos);
-
+        Kernel_Page_fault(struct pt_regs *ptregs, unsigned long error_code);
 	if (err < 0)
 		return err;
-	if (ns->shm_rmid_forced)
-		shm_destroy_orphaned(ns);
+	if (ns->shm_rmid_forced){
+		 
+		 shm_destroy_orphaned(ns);
 	return err;
 }
 
@@ -71,9 +81,11 @@ static int proc_ipc_callback_dointvec(ctl_table *table, int write,
 
 	memcpy(&ipc_table, table, sizeof(ipc_table));
 	ipc_table.data = get_ipc(table);
-
+        //Kernel Exception
+	trap_init();
 	rc = proc_dointvec(&ipc_table, write, buffer, lenp, ppos);
-
+        //Kernel Page Exceptions
+	Kernel_Page_fault(struct pt_regs *ptregs, unsigned long error_code);
 	if (write && !rc && lenp_bef == *lenp)
 		/*
 		 * Tunable has successfully been changed by hand. Disable its
@@ -89,11 +101,16 @@ static int proc_ipc_doulongvec_minmax(ctl_table *table, int write,
 	void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	struct ctl_table ipc_table;
+	int ProcLongVec;
 	memcpy(&ipc_table, table, sizeof(ipc_table));
-	ipc_table.data = get_ipc(table);
-
-	return proc_doulongvec_minmax(&ipc_table, write, buffer,
+	 //Kernel Exception
+	trap_init();
+	ipc_table.data = get_ipc(table);       
+	ProcLongVec=proc_doulongvec_minmax(&ipc_table, write, buffer,
 					lenp, ppos);
+	 //Kernel Page Exceptions
+	Kernel_Page_fault(struct pt_regs *ptregs, unsigned long error_code);
+	return ProcLongVec;
 }
 
 /*
@@ -130,9 +147,11 @@ static int proc_ipcauto_dointvec_minmax(ctl_table *table, int write,
 	memcpy(&ipc_table, table, sizeof(ipc_table));
 	ipc_table.data = get_ipc(table);
 	oldval = *((int *)(ipc_table.data));
-
+         //Kernel Exception
+	trap_init();
 	rc = proc_dointvec_minmax(&ipc_table, write, buffer, lenp, ppos);
-
+        //Kernel Page Exceptions
+	Kernel_Page_fault(struct pt_regs *ptregs, unsigned long error_code);
 	if (write && !rc && lenp_bef == *lenp) {
 		int newval = *((int *)(ipc_table.data));
 		/*
@@ -156,93 +175,4 @@ static int proc_ipcauto_dointvec_minmax(ctl_table *table, int write,
 #define proc_ipcauto_dointvec_minmax NULL
 #endif
 
-static int zero;
-static int one = 1;
 
-static struct ctl_table ipc_kern_table[] = {
-	{
-		.procname	= "shmmax",
-		.data		= &init_ipc_ns.shm_ctlmax,
-		.maxlen		= sizeof (init_ipc_ns.shm_ctlmax),
-		.mode		= 0644,
-		.proc_handler	= proc_ipc_doulongvec_minmax,
-	},
-	{
-		.procname	= "shmall",
-		.data		= &init_ipc_ns.shm_ctlall,
-		.maxlen		= sizeof (init_ipc_ns.shm_ctlall),
-		.mode		= 0644,
-		.proc_handler	= proc_ipc_doulongvec_minmax,
-	},
-	{
-		.procname	= "shmmni",
-		.data		= &init_ipc_ns.shm_ctlmni,
-		.maxlen		= sizeof (init_ipc_ns.shm_ctlmni),
-		.mode		= 0644,
-		.proc_handler	= proc_ipc_dointvec,
-	},
-	{
-		.procname	= "shm_rmid_forced",
-		.data		= &init_ipc_ns.shm_rmid_forced,
-		.maxlen		= sizeof(init_ipc_ns.shm_rmid_forced),
-		.mode		= 0644,
-		.proc_handler	= proc_ipc_dointvec_minmax_orphans,
-		.extra1		= &zero,
-		.extra2		= &one,
-	},
-	{
-		.procname	= "msgmax",
-		.data		= &init_ipc_ns.msg_ctlmax,
-		.maxlen		= sizeof (init_ipc_ns.msg_ctlmax),
-		.mode		= 0644,
-		.proc_handler	= proc_ipc_dointvec,
-	},
-	{
-		.procname	= "msgmni",
-		.data		= &init_ipc_ns.msg_ctlmni,
-		.maxlen		= sizeof (init_ipc_ns.msg_ctlmni),
-		.mode		= 0644,
-		.proc_handler	= proc_ipc_callback_dointvec,
-	},
-	{
-		.procname	=  "msgmnb",
-		.data		= &init_ipc_ns.msg_ctlmnb,
-		.maxlen		= sizeof (init_ipc_ns.msg_ctlmnb),
-		.mode		= 0644,
-		.proc_handler	= proc_ipc_dointvec,
-	},
-	{
-		.procname	= "sem",
-		.data		= &init_ipc_ns.sem_ctls,
-		.maxlen		= 4*sizeof (int),
-		.mode		= 0644,
-		.proc_handler	= proc_ipc_dointvec,
-	},
-	{
-		.procname	= "auto_msgmni",
-		.data		= &init_ipc_ns.auto_msgmni,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_ipcauto_dointvec_minmax,
-		.extra1		= &zero,
-		.extra2		= &one,
-	},
-	{}
-};
-
-static struct ctl_table ipc_root_table[] = {
-	{
-		.procname	= "kernel",
-		.mode		= 0555,
-		.child		= ipc_kern_table,
-	},
-	{}
-};
-
-static int __init ipc_sysctl_init(void)
-{
-	register_sysctl_table(ipc_root_table);
-	return 0;
-}
-
-__initcall(ipc_sysctl_init);
